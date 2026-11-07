@@ -19,6 +19,7 @@ import (
 	"github.com/navidrome/navidrome/resources"
 	"github.com/navidrome/navidrome/scanner"
 	"github.com/navidrome/navidrome/scheduler"
+	"github.com/navidrome/navidrome/server"
 	"github.com/navidrome/navidrome/server/backgrounds"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -71,6 +72,9 @@ func preRun() {
 		println(resources.Banner())
 	}
 	conf.Load(noBanner)
+	if err := server.LoadExperimentalPlaylistFolder(); err != nil {
+		log.Warn("Custom Playlist folder setting could not be applied", "error", err)
+	}
 }
 
 func postRun() {

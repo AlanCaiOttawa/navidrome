@@ -1,0 +1,26 @@
+# Experimental Navidrome fork. Run from the ROOT of the extracted source tree:
+# docker compose --env-file experimental-docs/.env -f experimental-docs/docker-compose.windows-test.yml up -d --build
+# Windows test: music at C:\Music and M3U playlists at C:\Music\Playlist.
+# Ensure both folders exist before starting Docker Desktop.
+services:
+  navidrome-experimental:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: final
+    image: navidrome:collections-resume-m3u-alpha
+    container_name: navidrome-experimental
+    ports:
+      - "4534:4533"
+    environment:
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_AUTOIMPORTPLAYLISTS: "true"
+      ND_PLAYLISTSPATH: "Playlist" # UI selection overrides after restarting
+      ND_EXPERIMENTALM3UROOT: /m3u-write
+    volumes:
+      - "C:/Music:/music:ro"
+      - "C:/Music/Playlist:/music/Playlist:rw"
+      - "C:/Music/Playlist:/m3u-write:rw"
+      - "./navidrome-data:/data"
+    restart: unless-stopped

@@ -4,6 +4,7 @@ import { Layout as RALayout, toggleSidebar } from 'react-admin'
 import { makeStyles } from '@material-ui/core/styles'
 import { HotKeys } from 'react-hotkeys'
 import Menu from './Menu'
+import { ExperimentalDialogs } from '../experimental/Dialogs'
 import AppBar from './AppBar'
 import Notification from './Notification'
 import useCurrentTheme from '../themes/useCurrentTheme'
@@ -34,6 +35,7 @@ const Layout = (props) => {
         theme={theme}
         notification={Notification}
       />
+      <ExperimentalDialogs />
     </HotKeys>
   )
 }

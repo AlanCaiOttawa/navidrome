@@ -27,6 +27,7 @@ import {
 } from '../actions'
 import { formatBytes } from '../utils'
 import config from '../config'
+import { choosePlayback } from '../experimental/api'
 import { RefreshMetadataButton, ToggleFieldsMenu } from '../common'
 
 const useStyles = makeStyles({
@@ -57,8 +58,8 @@ const AlbumActions = ({
   const isNotSmall = useMediaQuery((theme) => theme.breakpoints.up('sm'))
 
   const handlePlay = React.useCallback(() => {
-    dispatch(playTracks(data, ids))
-  }, [dispatch, data, ids])
+    choosePlayback('album', record.id, record.name, data, ids, dispatch, playTracks)
+  }, [dispatch, data, ids, record])
 
   const handlePlayNext = React.useCallback(() => {
     dispatch(playNext(data, ids))

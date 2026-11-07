@@ -62,6 +62,7 @@ const SubMenu = ({
   secondaryActionIcon,
   secondaryActionTitle,
   secondaryActionActive,
+  showIconWhenCollapsed = false,
 }) => {
   const translate = useTranslate()
   const classes = useStyles()
@@ -91,7 +92,7 @@ const SubMenu = ({
         onClick={handleToggle}
       >
         <ListItemIcon className={classes.icon}>
-          {isOpen ? <ExpandMore /> : icon}
+          {showIconWhenCollapsed && !sidebarIsOpen ? icon : isOpen ? <ExpandMore /> : icon}
         </ListItemIcon>
         <Typography
           variant="inherit"

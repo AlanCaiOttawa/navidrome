@@ -15,6 +15,7 @@ import ReactJkMusicPlayer from 'navidrome-music-player'
 import 'navidrome-music-player/assets/index.css'
 import useCurrentTheme from '../themes/useCurrentTheme'
 import config from '../config'
+import { getPlaybackContext, getResumeSeek, clearResumeSeek, saveProgress, rememberPlaybackPosition, flushPlaybackPosition } from '../experimental/api'
 import useStyle from './styles'
 import AudioTitle from './AudioTitle'
 import {
@@ -45,6 +46,7 @@ const Player = () => {
   const [currentTrackId, setCurrentTrackId] = useState(null)
   const [heartbeatTrackId, setHeartbeatTrackId] = useState(null)
   const lastPositionMsRef = useRef(0)
+  const lastExperimentalSaveRef = useRef(0)
   const currentTrackIdRef = useRef(null)
   const stoppedRef = useRef(false)
   const [audioInstance, setAudioInstance] = useState(null)
@@ -180,6 +182,7 @@ const Player = () => {
     }
 
     const handlePageHide = () => {
+      flushPlaybackPosition().catch(() => {})
       if (currentTrackIdRef.current && !playerState.current?.isRadio) {
         stoppedRef.current = true
         try {
@@ -207,7 +210,9 @@ const Player = () => {
       theme: playerTheme,
       bounds: 'body',
       playMode: playerState.mode,
-      mode: 'full',
+      // Start mobile playback in the compact player. The full-screen player
+      // can be opened manually, but route changes must not re-open it.
+      mode: isMobilePlayer ? 'mini' : 'full',
       loadAudioErrorPlayNext: false,
       autoPlayInitLoadPlayList: true,
       clearPriorAudioLists: false,
@@ -236,7 +241,7 @@ const Player = () => {
       locale: locale(translate),
       sortableOptions: { delay: 200, delayOnTouchOnly: true },
     }),
-    [gainInfo, isDesktop, playerTheme, translate, playerState.mode],
+    [gainInfo, isDesktop, isMobilePlayer, playerTheme, translate, playerState.mode],
   )
 
   const options = useMemo(() => {
@@ -264,13 +269,32 @@ const Player = () => {
   )
 
   const onAudioProgress = useCallback((info) => {
+    const pendingSeek = getResumeSeek()
+    if (pendingSeek?.trackId === info.trackId && audioInstance) {
+      try {
+        audioInstance.currentTime = pendingSeek.seconds
+        clearResumeSeek()
+      } catch (error) { console.warn('Resume seek failed:', error) }
+    }
     if (info.ended) {
       document.title = 'Navidrome'
     }
     if (!info.isRadio && info.currentTime != null) {
       lastPositionMsRef.current = Math.floor(info.currentTime * 1000)
+      const pending = getResumeSeek()
+      if (pending) return // Wait for onAudioPlay to perform the initial seek
+      const active = getPlaybackContext()
+      const now = Date.now()
+      if (active?.id && info.trackId && active.trackIds?.includes(info.trackId) && !info.ended) {
+        rememberPlaybackPosition({ ...active, trackId: info.trackId,
+          seconds: info.currentTime, duration: info.duration || 0 })
+        if (now - lastExperimentalSaveRef.current >= 3000) {
+          lastExperimentalSaveRef.current = now
+          flushPlaybackPosition().catch((error) => console.warn('Playback position not saved:', error))
+        }
+      }
     }
-  }, [])
+  }, [audioInstance])
 
   const onAudioVolumeChange = useCallback(
     // sqrt to compensate for the logarithmic volume
@@ -285,6 +309,13 @@ const Player = () => {
       }
 
       dispatch(currentPlaying(info))
+      const pending = getResumeSeek()
+      if (pending && pending.trackId === info.trackId && audioInstance) {
+        try {
+          audioInstance.currentTime = pending.seconds
+          clearResumeSeek()
+        } catch (error) { console.warn('Resume seek failed:', error) }
+      }
       if (info.duration) {
         const song = info.song
         document.title = `${song.title} - ${song.artist} - Navidrome`
@@ -320,10 +351,11 @@ const Player = () => {
         }
       }
     },
-    [context, dispatch, showNotifications, currentTrackId],
+    [context, dispatch, showNotifications, currentTrackId, audioInstance],
   )
 
   const onAudioPlayTrackChange = useCallback(() => {
+    flushPlaybackPosition().catch((error) => console.warn('Track change position not saved:', error))
     if (currentTrackId) {
       subsonic.reportPlayback(
         currentTrackId,
@@ -337,6 +369,12 @@ const Player = () => {
 
   const onAudioPause = useCallback(
     (info) => {
+      const active = getPlaybackContext()
+      if (!info.isRadio && active?.id && active.trackIds?.includes(info.trackId)) {
+        rememberPlaybackPosition({ ...active, trackId: info.trackId,
+          seconds: info.currentTime || 0, duration: info.duration || 0 })
+        flushPlaybackPosition().catch((error) => console.warn('Pause position not saved:', error))
+      }
       dispatch(currentPlaying(info))
       if (!info.isRadio && currentTrackId) {
         const posMs = Math.floor(info.currentTime * 1000)
@@ -350,6 +388,18 @@ const Player = () => {
 
   const onAudioEnded = useCallback(
     (currentPlayId, audioLists, info) => {
+      const active = getPlaybackContext()
+      if (!info.isRadio && active?.id && active.trackIds?.includes(info.trackId)) {
+        // If more tracks follow, resume from the next one, not at the end of
+        // a completed track. Do not mark the whole album complete prematurely.
+        const currentIndex = active.trackIds.indexOf(info.trackId)
+        const nextTrackId = active.trackIds[currentIndex + 1]
+        rememberPlaybackPosition({ ...active,
+          trackId: nextTrackId || info.trackId,
+          seconds: nextTrackId ? 0 : (info.duration || 0),
+          duration: nextTrackId ? 0 : (info.duration || 0) })
+        flushPlaybackPosition().catch((error) => console.warn('End position not saved:', error))
+      }
       if (currentTrackId && !info.isRadio) {
         const posMs = Math.floor((info.duration || 0) * 1000)
         subsonic.reportPlayback(currentTrackId, posMs, 'stopped')

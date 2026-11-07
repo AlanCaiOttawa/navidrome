@@ -29,6 +29,7 @@ import { M3U_MIME_TYPE, REST_URL } from '../consts'
 import PropTypes from 'prop-types'
 import { formatBytes } from '../utils'
 import config from '../config'
+import { choosePlayback } from '../experimental/api'
 import { ToggleFieldsMenu } from '../common'
 
 const useStyles = makeStyles({
@@ -45,9 +46,11 @@ const PlaylistActions = ({ className, ids, data, record, ...rest }) => {
   const isNotSmall = useMediaQuery((theme) => theme.breakpoints.up('sm'))
 
   const getAllSongsAndDispatch = React.useCallback(
-    (action) => {
+    (action, resume = false) => {
       if (ids?.length === record.songCount) {
-        return dispatch(action(data, ids))
+        return resume
+          ? choosePlayback('playlist', record.id, record.name, data, ids, dispatch, action)
+          : dispatch(action(data, ids))
       }
 
       dataProvider
@@ -61,7 +64,11 @@ const PlaylistActions = ({ className, ids, data, record, ...rest }) => {
             (acc, curr) => ({ ...acc, [curr.id]: curr }),
             {},
           )
-          dispatch(action(data))
+          if (resume) {
+            choosePlayback('playlist', record.id, record.name, data, Object.keys(data), dispatch, action)
+          } else {
+            dispatch(action(data))
+          }
         })
         .catch(() => {
           notify('ra.page.error', 'warning')
@@ -71,7 +78,7 @@ const PlaylistActions = ({ className, ids, data, record, ...rest }) => {
   )
 
   const handlePlay = React.useCallback(() => {
-    getAllSongsAndDispatch(playTracks)
+    getAllSongsAndDispatch(playTracks, true)
   }, [getAllSongsAndDispatch])
 
   const handlePlayNext = React.useCallback(() => {
@@ -93,6 +100,21 @@ const PlaylistActions = ({ className, ids, data, record, ...rest }) => {
   const handleDownload = React.useCallback(() => {
     dispatch(openDownloadMenu(record, DOWNLOAD_MENU_PLAY))
   }, [dispatch, record])
+
+  const handleWriteM3U = React.useCallback(async () => {
+    try {
+      const preview = (await httpClient(`${REST_URL}/experimental/m3u/${record.id}`)).json
+      if (!window.confirm(`Save Navidrome playlist "${record.name}" to ${preview.filename}?\n\nThe original M3U will be backed up first. Existing Audio Station edits must have been imported before saving.`)) return
+      const result = (await httpClient(`${REST_URL}/experimental/m3u/${record.id}`, {
+        method: 'POST',
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ expectedHash: preview.hash }),
+      })).json
+      notify(`Saved ${result.filename}; backup: ${result.backup}`, 'info')
+    } catch (error) {
+      notify(`M3U writeback failed: ${error.message || error}`, 'warning')
+    }
+  }, [record, notify])
 
   const handleExport = React.useCallback(
     () =>
@@ -155,6 +177,9 @@ const PlaylistActions = ({ className, ids, data, record, ...rest }) => {
               <CloudDownloadOutlinedIcon />
             </Button>
           )}
+          {record.path && <Button onClick={handleWriteM3U} label="Save to M3U">
+            <QueueMusicIcon />
+          </Button>}
           <Button
             onClick={handleExport}
             label={translate('resources.playlist.actions.export')}

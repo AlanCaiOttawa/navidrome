@@ -5,6 +5,7 @@ import { IconButton } from '@material-ui/core'
 import { useDispatch } from 'react-redux'
 import { useDataProvider } from 'react-admin'
 import { playTracks } from '../actions'
+import { choosePlayback } from '../experimental/api'
 
 export const PlayButton = ({ record, size, className }) => {
   let extractSongsData = function (response) {
@@ -29,7 +30,7 @@ export const PlayButton = ({ record, size, className }) => {
       })
       .then((response) => {
         let { data, ids } = extractSongsData(response)
-        dispatch(playTracks(data, ids))
+        choosePlayback('album', record.id, record.name, data, ids, dispatch, playTracks)
       })
   }
 

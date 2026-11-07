@@ -40,6 +40,7 @@ func New(ds model.DataStore, broker events.Broker, insights metrics.Insights) *S
 	initialSetup(ds)
 	auth.Init(s.ds)
 	s.initRoutes()
+	s.mountExperimentalRoutes()
 	s.mountAuthenticationRoutes()
 	s.mountRootRedirector()
 	checkFFmpegInstallation()
@@ -121,6 +122,9 @@ func (s *Server) Run(ctx context.Context, addr string, port int, tlsCert string,
 	case <-time.After(50 * time.Millisecond):
 		log.Info(ctx, "----> Navidrome server is ready!", "address", addr, "startupTime", startupTime, "tlsEnabled", tlsEnabled)
 	}
+
+	// Run the experimental sync scheduler alongside this server instance.
+	go s.experimentalScheduler(ctx)
 
 	// Wait for a signal to terminate
 	select {

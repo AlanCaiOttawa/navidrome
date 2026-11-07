@@ -31,6 +31,7 @@ import config from '../config'
 import { formatBytes } from '../utils'
 import { artistDownloadSize } from './artist'
 import { useRefreshMetadata } from './useRefreshMetadata'
+import { choosePlayback, addAlbumToCollection, addFolderToCollection } from '../experimental/api'
 
 const useStyles = makeStyles({
   noWrap: {
@@ -87,7 +88,9 @@ const ContextMenu = ({
       enabled: true,
       needData: true,
       label: translate('resources.album.actions.playAll'),
-      action: (data, ids) => dispatch(playTracks(data, ids)),
+      action: (data, ids) => resource === 'album'
+        ? choosePlayback('album', record.id, record.name, data, ids, dispatch, playTracks)
+        : dispatch(playTracks(data, ids)),
     },
     playNext: {
       enabled: true,
@@ -106,6 +109,22 @@ const ContextMenu = ({
       needData: true,
       label: translate('resources.album.actions.shuffle'),
       action: (data, ids) => dispatch(shuffleTracks(data, ids)),
+    },
+    addToCollection: {
+      enabled: resource === 'album',
+      needData: false,
+      label: 'Add album to collection',
+      action: (album) => addAlbumToCollection(album.id, album.name)
+        .then((added) => { if (added) notify('Album added to collection', 'info') })
+        .catch((error) => notify(`Could not update collection: ${error.message}`, 'warning')),
+    },
+    addFolderToCollection: {
+      enabled: resource === 'album',
+      needData: false,
+      label: 'Add entire music folder to Collection',
+      action: () => addFolderToCollection()
+        .then((count) => { if (count) notify(`Added ${count} albums from folder`, 'info') })
+        .catch((error) => notify(`Could not add folder: ${error.message}`, 'warning')),
     },
     addToPlaylist: {
       enabled: true,
