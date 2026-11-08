@@ -316,6 +316,12 @@ const Player = () => {
           clearResumeSeek()
         } catch (error) { console.warn('Resume seek failed:', error) }
       }
+      // Commit the current song as soon as it starts; even a quick skip is remembered.
+      const active = getPlaybackContext()
+      if (!info.isRadio && active?.id && active.trackIds?.includes(info.trackId)) {
+        rememberPlaybackPosition({ ...active, trackId: info.trackId, seconds: 0, duration: 0 })
+        flushPlaybackPosition().catch((error) => console.warn('Current track not saved:', error))
+      }
       if (info.duration) {
         const song = info.song
         document.title = `${song.title} - ${song.artist} - Navidrome`
@@ -390,14 +396,10 @@ const Player = () => {
     (currentPlayId, audioLists, info) => {
       const active = getPlaybackContext()
       if (!info.isRadio && active?.id && active.trackIds?.includes(info.trackId)) {
-        // If more tracks follow, resume from the next one, not at the end of
-        // a completed track. Do not mark the whole album complete prematurely.
-        const currentIndex = active.trackIds.indexOf(info.trackId)
-        const nextTrackId = active.trackIds[currentIndex + 1]
+        // Save the song that ACTUALLY finished. Resume advances exactly one
+        // song; pre-saving the next song would accidentally skip two.
         rememberPlaybackPosition({ ...active,
-          trackId: nextTrackId || info.trackId,
-          seconds: nextTrackId ? 0 : (info.duration || 0),
-          duration: nextTrackId ? 0 : (info.duration || 0) })
+          trackId: info.trackId, seconds: 0, duration: 0 })
         flushPlaybackPosition().catch((error) => console.warn('End position not saved:', error))
       }
       if (currentTrackId && !info.isRadio) {

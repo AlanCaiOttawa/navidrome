@@ -30,7 +30,7 @@ export const ExperimentalDialogs = () => {
     <DialogContent>
       {current?.kind === 'resume' ? <>
         <Typography variant="body1">{current.name}</Typography>
-        <Typography color="textSecondary">Last position: {current.position}</Typography>
+        <Typography color="textSecondary">{current.position}</Typography>
       </> : <>
         <Typography gutterBottom>{current?.kind === 'folder' ? 'Add all albums from this folder (including subfolders)' : current?.albumName}</Typography>
         {current?.kind === 'folder' && <FolderBrowser selected={folder} onSelect={(id, entry) => { setFolder(id); setFolderInfo(entry) }} />}

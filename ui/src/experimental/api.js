@@ -31,7 +31,8 @@ export const saveProgress = (value) => {
 
 export const rememberPlaybackPosition = (value) => {
   if (value?.id && value?.trackId && Number.isFinite(value.seconds) && value.seconds >= 0) {
-    latestProgressSnapshot = { ...value, recordedAt: new Date().toISOString() }
+    latestProgressSnapshot = { ...value, seconds: 0, duration: 0,
+      recordedAt: new Date().toISOString() }
   }
 }
 export const flushPlaybackPosition = () => {
@@ -63,30 +64,34 @@ export const getResumeSeek = () => {
   try { return JSON.parse(sessionStorage.getItem(resumeKey)) } catch { return null }
 }
 export const clearResumeSeek = () => sessionStorage.removeItem(resumeKey)
+// Music playback remembers only the last track, not its playback seconds.
+// Resume always starts at the BEGINNING of the following track, wrapping
+// to track 1 after the final track. Existing server records remain usable.
 export const choosePlayback = async (type, id, name, data, ids, dispatch, playTracks) => {
-  await flushPlaybackPosition().catch((error) => console.warn('Previous position not saved:', error))
-  let resume = null
+  await flushPlaybackPosition().catch((error) => console.warn('Previous track not saved:', error))
+  const orderedKeys = (ids?.length ? ids : Object.keys(data)).filter((key) => data[key])
+  const trackIdOf = (key) => String(data[key]?.mediaFileId || data[key]?.id || '')
+  let selectedKey = null
   try {
     const state = await readState()
     const prior = state.progress?.find((p) => p.type === type && p.id === id)
-    // A new track may be at second 0 when changing albums. Do not lose its
-    // position simply because less than five seconds have elapsed.
-    const unfinished = prior && prior.trackId && prior.seconds >= 0 &&
-      (!prior.duration || prior.seconds < prior.duration - 3)
-    if (unfinished) {
+    const previousIndex = prior?.trackId
+      ? orderedKeys.findIndex((key) => trackIdOf(key) === String(prior.trackId))
+      : -1
+    if (previousIndex >= 0 && orderedKeys.length > 0) {
+      const nextKey = orderedKeys[(previousIndex + 1) % orderedKeys.length]
+      const nextSong = data[nextKey]
       const decision = await openExperimentalDialog({ kind: 'resume', name,
-        position: `${Math.floor(prior.seconds / 60)}:${String(Math.floor(prior.seconds % 60)).padStart(2, '0')}` })
+        position: `Next track: ${nextSong?.title || nextSong?.name || `#${(previousIndex + 1) % orderedKeys.length + 1}`}` })
       if (decision === null) return
-      if (decision === 'resume') resume = prior
+      if (decision === 'resume') selectedKey = nextKey
     }
   } catch (error) {
-    console.warn('Could not read saved playback position:', error)
+    console.warn('Could not read last played track:', error)
   }
-  const match = resume && Object.keys(data).find((key) =>
-    String(data[key]?.mediaFileId || data[key]?.id) === String(resume.trackId))
-  setPlaybackContext(type, id, name, match ? resume : null,
-    Object.values(data).map((item) => String(item.mediaFileId || item.id)).filter(Boolean))
-  dispatch(playTracks(data, ids, match || undefined))
+  // No within-track seeking for albums or playlists, including old progress.
+  setPlaybackContext(type, id, name, null, orderedKeys.map(trackIdOf).filter(Boolean))
+  dispatch(playTracks(data, ids, selectedKey || undefined))
 }
 
 export const readPlaylistFolder = async () => (await httpClient(`${url}/playlist-folder`)).json
