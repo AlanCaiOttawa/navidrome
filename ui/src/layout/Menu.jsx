@@ -16,6 +16,8 @@ import { readState } from '../experimental/api'
 import FolderSpecialIcon from '@material-ui/icons/FolderSpecial'
 import SyncIcon from '@material-ui/icons/Sync'
 import ViewModuleIcon from '@material-ui/icons/ViewModule'
+import MusicNoteIcon from '@material-ui/icons/MusicNote'
+import LibraryMusicIcon from '@material-ui/icons/LibraryMusic'
 
 const useStyles = makeStyles((theme) => ({
   root: {
@@ -192,12 +194,16 @@ const Menu = ({ dense = false }) => {
           {collections.map(collectionItem)}
         </div>
       </SubMenu>
+      <MenuItemLink to="/catalogue" primaryText="Catalogue"
+        leftIcon={<LibraryMusicIcon />} sidebarIsOpen={open} dense={dense} />
       <MenuItemLink to="/m3u-sync" primaryText="M3U Playlist Sync"
         leftIcon={<SyncIcon />} sidebarIsOpen={open} dense={dense} />
       <MenuItemLink to="/recent-albums" primaryText="Recently Played Albums"
         leftIcon={<AlbumIcon />} sidebarIsOpen={open} dense={dense} />
       <MenuItemLink to="/recent-playlists" primaryText="Recently Played Playlists"
         leftIcon={<CollectionsBookmarkIcon />} sidebarIsOpen={open} dense={dense} />
+      <MenuItemLink to="/recent-song-editing" primaryText="Recently Played Song Editing"
+        leftIcon={<MusicNoteIcon />} sidebarIsOpen={open} dense={dense} />
       <SubMenu
         handleToggle={() => handleToggle('menuAlbumList')}
         isOpen={state.menuAlbumList}

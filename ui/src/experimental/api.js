@@ -4,6 +4,33 @@ import { httpClient } from '../dataProvider'
 const url = '/api/experimental'
 export const readState = async () =>
   (await httpClient(`${url}/state`)).json
+export const saveCatalogueIndex = async (artists) =>
+  (await httpClient(`${url}/catalogue-index`, {
+    method: 'PUT',
+    body: JSON.stringify({ artists }),
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+  })).json
+export const saveCataloguePins = async (artists, minimum) =>
+  (await httpClient(`${url}/catalogue-pins`, {
+    method: 'PUT',
+    body: JSON.stringify({ artists, minimum }),
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+  })).json
+// Server resolves media file IDs into paths relative to the Synology Playlist folder.
+// This downloads a file only; it never writes to NAS folders or creates a playlist.
+export const exportCatalogueM3U = async (artist, tracks) =>
+  (await httpClient(`${url}/catalogue-export-m3u`, {
+    method: 'POST',
+    body: JSON.stringify({ artist, tracks }),
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+  })).json
+
+export const saveCatalogueOrder = async (artist, titles) =>
+  (await httpClient(`${url}/catalogue-order`, {
+    method: 'PUT',
+    body: JSON.stringify({ artist, titles }),
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+  })).json
 export const saveCollections = async (items) =>
   (await httpClient(`${url}/collections`, {
     method: 'PUT',
@@ -202,3 +229,28 @@ export const resolveUnmatchedM3U = async (playlistId, data) =>
   })).json
 export const browseM3USongs = async (folder = '') =>
   (await httpClient(`${url}/m3u-sync-browse?folder=${encodeURIComponent(folder)}`)).json
+
+// Per-user five-song history. Independent of Album/Playlist resume context.
+export const recordRecentSong = (id) =>
+  (httpClient(`${url}/recent-song`, { method: 'POST', body: JSON.stringify({ id }),
+    headers: new Headers({ 'Content-Type': 'application/json' }) })).then((r) => r.json)
+export const pinRecentSong = (id, pinned) =>
+  (httpClient(`${url}/recent-song/${encodeURIComponent(id)}/pin`, { method: 'PUT',
+    body: JSON.stringify({ pinned }), headers: new Headers({ 'Content-Type': 'application/json' }) })).then((r) => r.json)
+const songEditorUrl = (id) => `${url}/song-editor/${encodeURIComponent(id)}`
+const jsonAction = (path, method, data) => httpClient(path, {
+  method, headers: new Headers({ 'Content-Type': 'application/json' }),
+  ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+}).then((r) => r.json)
+export const getSongEditor = (id) => httpClient(songEditorUrl(id)).then((r) => r.json)
+export const saveSongTags = (id, data) => jsonAction(`${songEditorUrl(id)}/tags`, 'PUT', data)
+export const getSongCoverFiles = (id) => httpClient(`${songEditorUrl(id)}/covers`).then((r) => r.json)
+export const useFolderCover = (id, name) => jsonAction(`${songEditorUrl(id)}/cover-from-folder`, 'POST', { name })
+export const deleteSongCover = (id) => jsonAction(`${songEditorUrl(id)}/cover`, 'DELETE')
+export const uploadSongCover = (id, file) => {
+  const data = new FormData()
+  data.append('cover', file, file.name)
+  return httpClient(`${songEditorUrl(id)}/cover`, { method: 'POST', body: data }).then((r) => r.json)
+}
+export const updateSongPlaylist = (id, playlistId, add) =>
+  jsonAction(`${songEditorUrl(id)}/playlists/${encodeURIComponent(playlistId)}`, add ? 'PUT' : 'DELETE')

@@ -40,9 +40,24 @@ type experimentalPosition struct {
 	UpdatedAt  time.Time `json:"updatedAt"`
 	RecordedAt time.Time `json:"recordedAt,omitempty"`
 }
+type experimentalRecentSong struct {
+	ID       string    `json:"id"`
+	Pinned   bool      `json:"pinned"`
+	PlayedAt time.Time `json:"playedAt"`
+}
+type experimentalCatalogueArtist struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Count     int      `json:"count"`
+	ArtistIDs []string `json:"artistIds"`
+}
 type experimentalState struct {
-	Collections []experimentalCollection `json:"collections"`
-	Progress    []experimentalPosition   `json:"progress"`
+	RecentSongs     []experimentalRecentSong      `json:"recentSongs"`
+	Collections     []experimentalCollection      `json:"collections"`
+	Progress        []experimentalPosition        `json:"progress"`
+	CatalogueOrders map[string][]string           `json:"catalogueOrders"`
+	CataloguePins   []string                      `json:"cataloguePins"`
+	CatalogueIndex  []experimentalCatalogueArtist `json:"catalogueIndex"`
 }
 
 var experimentalMu sync.Mutex
@@ -161,7 +176,7 @@ func experimentalFile(userID string) string {
 	return filepath.Join(conf.Server.DataFolder.String(), "experimental", hex.EncodeToString(hash[:])+".json")
 }
 func readExperimental(file string) (experimentalState, error) {
-	state := experimentalState{Collections: []experimentalCollection{}, Progress: []experimentalPosition{}}
+	state := experimentalState{Collections: []experimentalCollection{}, Progress: []experimentalPosition{}, RecentSongs: []experimentalRecentSong{}, CatalogueOrders: map[string][]string{}, CataloguePins: []string{}}
 	b, err := os.ReadFile(file)
 	if errors.Is(err, os.ErrNotExist) {
 		return state, nil
@@ -177,6 +192,15 @@ func readExperimental(file string) (experimentalState, error) {
 	}
 	if state.Progress == nil {
 		state.Progress = []experimentalPosition{}
+	}
+	if state.RecentSongs == nil {
+		state.RecentSongs = []experimentalRecentSong{}
+	}
+	if state.CatalogueOrders == nil {
+		state.CatalogueOrders = map[string][]string{}
+	}
+	if state.CataloguePins == nil {
+		state.CataloguePins = []string{}
 	}
 	return state, nil
 }
@@ -234,6 +258,17 @@ func (s *Server) mountExperimentalRoutes() {
 			r.Put("/playlist-folder", s.experimentalPlaylistFolder)
 			r.Get("/m3u/{id}", s.experimentalM3UPreview)
 			r.Post("/m3u/{id}", s.experimentalM3USave)
+			r.Post("/recent-song", s.experimentalRecordSong)
+			r.Put("/recent-song/{id}/pin", s.experimentalPinSong)
+			r.Get("/song-editor/{id}", s.experimentalSongEditorInfo)
+			r.Put("/song-editor/{id}/tags", s.experimentalSongEditTags)
+			r.Get("/song-editor/{id}/covers", s.experimentalSongCoverFiles)
+			r.Post("/song-editor/{id}/cover", s.experimentalSongCoverUpload)
+			r.Post("/song-editor/{id}/cover-from-folder", s.experimentalSongCoverFromFolder)
+			r.Delete("/song-editor/{id}/cover", s.experimentalSongCoverRemove)
+			r.Put("/song-editor/{id}/playlists/{playlistId}", s.experimentalSongPlaylistAdd)
+			r.Delete("/song-editor/{id}/playlists/{playlistId}", s.experimentalSongPlaylistRemove)
+			r.Post("/catalogue-export-m3u", s.experimentalCatalogueM3U)
 			r.Get("/state", func(w http.ResponseWriter, req *http.Request) {
 				user, ok := request.UserFrom(req.Context())
 				if !ok {
@@ -248,6 +283,148 @@ func (s *Server) mountExperimentalRoutes() {
 					return
 				}
 				experimentalRespond(w, 200, state)
+			})
+			r.Put("/catalogue-index", func(w http.ResponseWriter, req *http.Request) {
+				user, ok := request.UserFrom(req.Context())
+				if !ok {
+					http.Error(w, "unauthorized", 401)
+					return
+				}
+				req.Body = http.MaxBytesReader(w, req.Body, 4*1024*1024)
+				var value struct {
+					Artists []experimentalCatalogueArtist `json:"artists"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&value); err != nil || value.Artists == nil {
+					http.Error(w, "invalid artist index", 400)
+					return
+				}
+				if len(value.Artists) > 30000 {
+					http.Error(w, "too many artists", 400)
+					return
+				}
+				seen := make(map[string]bool, len(value.Artists))
+				for _, a := range value.Artists {
+					if a.ID == "" || len(a.ID) > 1024 || a.Name == "" || len(a.Name) > 1024 || a.Count < 0 || a.Count > 1000000 || len(a.ArtistIDs) > 30 || seen[a.ID] {
+						http.Error(w, "invalid artist entry", 400)
+						return
+					}
+					seen[a.ID] = true
+					for _, id := range a.ArtistIDs {
+						if id == "" || len(id) > 256 {
+							http.Error(w, "invalid artist ID", 400)
+							return
+						}
+					}
+				}
+				experimentalMu.Lock()
+				defer experimentalMu.Unlock()
+				file := experimentalFile(user.ID)
+				state, err := readExperimental(file)
+				if err != nil {
+					http.Error(w, "cannot read state", 500)
+					return
+				}
+				state.CatalogueIndex = value.Artists
+				if err := writeExperimental(file, state); err != nil {
+					http.Error(w, "cannot save catalogue index", 500)
+					return
+				}
+				experimentalRespond(w, 200, map[string]any{"saved": len(value.Artists)})
+			})
+			r.Put("/catalogue-pins", func(w http.ResponseWriter, req *http.Request) {
+				user, ok := request.UserFrom(req.Context())
+				if !ok {
+					http.Error(w, "unauthorized", 401)
+					return
+				}
+				req.Body = http.MaxBytesReader(w, req.Body, 128*1024)
+				var value struct {
+					Artists []string `json:"artists"`
+					Minimum int      `json:"minimum"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&value); err != nil || value.Artists == nil || len(value.Artists) > 5000 || value.Minimum < 0 || value.Minimum > 999999 {
+					http.Error(w, "invalid pinned artist list", 400)
+					return
+				}
+				experimentalMu.Lock()
+				defer experimentalMu.Unlock()
+				file := experimentalFile(user.ID)
+				state, err := readExperimental(file)
+				if err != nil {
+					http.Error(w, "cannot read state", 500)
+					return
+				}
+				// Pinned artists must still qualify for the current minimum.
+				eligible := make(map[string]bool, len(state.CatalogueIndex))
+				for _, a := range state.CatalogueIndex {
+					if a.Count > value.Minimum && a.ID != "" {
+						eligible[a.ID] = true
+					}
+				}
+				seen := make(map[string]bool, len(value.Artists))
+				pins := make([]string, 0, len(value.Artists))
+				for _, id := range value.Artists {
+					if len(id) > 1024 || !eligible[id] || seen[id] {
+						continue
+					}
+					seen[id] = true
+					pins = append(pins, id)
+				}
+				state.CataloguePins = pins
+				if err := writeExperimental(file, state); err != nil {
+					http.Error(w, "cannot save catalogue pins", 500)
+					return
+				}
+				experimentalRespond(w, 200, map[string]any{"artists": pins})
+			})
+			r.Put("/catalogue-order", func(w http.ResponseWriter, req *http.Request) {
+				user, ok := request.UserFrom(req.Context())
+				if !ok {
+					http.Error(w, "unauthorized", 401)
+					return
+				}
+				req.Body = http.MaxBytesReader(w, req.Body, 128*1024)
+				var value struct {
+					Artist string   `json:"artist"`
+					Titles []string `json:"titles"`
+				}
+				if err := json.NewDecoder(req.Body).Decode(&value); err != nil {
+					http.Error(w, "invalid JSON", 400)
+					return
+				}
+				// Both keys are Unicode-normalized, case-folded by the client.
+				// Limits prevent a client from filling the per-user JSON file.
+				value.Artist = strings.TrimSpace(value.Artist)
+				if value.Artist == "" || len(value.Artist) > 1024 || len(value.Titles) > 20000 {
+					http.Error(w, "invalid catalogue order", 400)
+					return
+				}
+				seen := make(map[string]bool, len(value.Titles))
+				for _, title := range value.Titles {
+					if title == "" || len(title) > 1024 || seen[title] {
+						http.Error(w, "invalid or repeated song title", 400)
+						return
+					}
+					seen[title] = true
+				}
+				experimentalMu.Lock()
+				defer experimentalMu.Unlock()
+				file := experimentalFile(user.ID)
+				state, err := readExperimental(file)
+				if err != nil {
+					http.Error(w, "cannot read state", 500)
+					return
+				}
+				if _, existing := state.CatalogueOrders[value.Artist]; !existing && len(state.CatalogueOrders) >= 5000 {
+					http.Error(w, "catalogue order limit reached", 400)
+					return
+				}
+				state.CatalogueOrders[value.Artist] = value.Titles
+				if err := writeExperimental(file, state); err != nil {
+					http.Error(w, "cannot save catalogue order", 500)
+					return
+				}
+				experimentalRespond(w, 200, map[string]any{"artist": value.Artist, "titles": value.Titles})
 			})
 			r.Put("/collections", func(w http.ResponseWriter, req *http.Request) {
 				user, ok := request.UserFrom(req.Context())
@@ -295,7 +472,7 @@ func (s *Server) mountExperimentalRoutes() {
 					http.Error(w, "invalid JSON", 400)
 					return
 				}
-				if (value.Type != "album" && value.Type != "playlist") || value.ID == "" || len(value.ID) > 150 || len(value.Name) > 300 || len(value.TrackID) > 150 || value.Seconds < 0 || value.Seconds > 86400 {
+				if (value.Type != "album" && value.Type != "playlist") || value.ID == "" || (len(value.ID) > 150 && !(value.Type == "playlist" && strings.HasPrefix(value.ID, "catalogue:") && len(value.ID) <= 512)) || len(value.Name) > 300 || len(value.TrackID) > 150 || value.Seconds < 0 || value.Seconds > 86400 {
 					http.Error(w, "invalid progress", 400)
 					return
 				}

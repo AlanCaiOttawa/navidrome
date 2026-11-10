@@ -15,7 +15,7 @@ import ReactJkMusicPlayer from 'navidrome-music-player'
 import 'navidrome-music-player/assets/index.css'
 import useCurrentTheme from '../themes/useCurrentTheme'
 import config from '../config'
-import { getPlaybackContext, getResumeSeek, clearResumeSeek, saveProgress, rememberPlaybackPosition, flushPlaybackPosition } from '../experimental/api'
+import { getPlaybackContext, recordRecentSong, getResumeSeek, clearResumeSeek, saveProgress, rememberPlaybackPosition, flushPlaybackPosition } from '../experimental/api'
 import useStyle from './styles'
 import AudioTitle from './AudioTitle'
 import {
@@ -309,6 +309,11 @@ const Player = () => {
       }
 
       dispatch(currentPlaying(info))
+      // Every individually played song counts, including Search results.
+      // No album/playlist context is needed for this independent five-song history.
+      if (!info.isRadio && info.trackId) {
+        recordRecentSong(info.trackId).catch((error) => console.warn('Recent song not saved:', error))
+      }
       const pending = getResumeSeek()
       if (pending && pending.trackId === info.trackId && audioInstance) {
         try {

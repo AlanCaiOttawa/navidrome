@@ -8,9 +8,11 @@ import {
 import PlayArrowIcon from '@material-ui/icons/PlayArrow'
 import ViewModuleIcon from '@material-ui/icons/ViewModule'
 import ViewListIcon from '@material-ui/icons/ViewList'
+import LibraryMusicIcon from '@material-ui/icons/LibraryMusic'
 import { Artwork } from '../common/Artwork'
 import { playTracks } from '../actions'
 import { choosePlayback, readState } from './api'
+import { catalogueArtistId, loadCatalogueArtistSongs } from './cataloguePlayback'
 
 const getRecentView = (type) => {
   try { return window.localStorage.getItem(`nd_recently_played_${type}_view`) === 'list' ? 'list' : 'cover' }
@@ -32,6 +34,7 @@ export default function RecentlyPlayed({ type }) {
     catch { /* Storage is optional (e.g., private mode). */ }
   }
   const resource = type === 'album' ? 'album' : 'playlist'
+  const isCatalogue = (item) => type === 'playlist' && catalogueArtistId(item.id) !== null
   const label = type === 'album' ? 'Albums' : 'Playlists'
 
   useEffect(() => {
@@ -45,7 +48,14 @@ export default function RecentlyPlayed({ type }) {
         if (!active) return
         setItems(next)
         if (!next.length) { setRecords({}); return }
-        const results = await Promise.allSettled(next.map((item) => dataProvider.getOne(resource, { id: item.id })))
+        // Virtual artist catalogues live in the saved index, not the playlist table.
+        // Avoid getOne(playlist) for those IDs.
+        const index = new Map((state.catalogueIndex || []).map((artist) => [artist.id, artist]))
+        const results = await Promise.allSettled(next.map((item) => isCatalogue(item)
+          ? Promise.resolve({ data: { id: item.id,
+            name: item.name || `Catalogue — ${index.get(catalogueArtistId(item.id))?.name || catalogueArtistId(item.id)}`,
+            virtualCatalogue: true } })
+          : dataProvider.getOne(resource, { id: item.id })))
         if (!active) return
         const byId = {}
         results.forEach((result, index) => {
@@ -65,12 +75,21 @@ export default function RecentlyPlayed({ type }) {
     setPlaying(item.id)
     setError('')
     try {
-      const result = await dataProvider.getList(type === 'album' ? 'song' : 'playlistTrack', {
-        pagination: { page: 1, perPage: 0 },
-        sort: { field: type === 'album' ? 'album' : 'id', order: 'ASC' },
-        filter: type === 'album' ? { album_id: item.id } : { playlist_id: item.id },
-      })
-      const tracks = result.data || []
+      let tracks
+      if (isCatalogue(item)) {
+        const state = await readState()
+        const artistId = catalogueArtistId(item.id)
+        const artist = (state.catalogueIndex || []).find((entry) => entry.id === artistId)
+        if (!artist) throw new Error('Artist missing from saved Catalogue index. Open Catalogue and refresh the library.')
+        tracks = await loadCatalogueArtistSongs(dataProvider, artist, state.catalogueOrders?.[artistId])
+      } else {
+        const result = await dataProvider.getList(type === 'album' ? 'song' : 'playlistTrack', {
+          pagination: { page: 1, perPage: 0 },
+          sort: { field: type === 'album' ? 'album' : 'id', order: 'ASC' },
+          filter: type === 'album' ? { album_id: item.id } : { playlist_id: item.id },
+        })
+        tracks = result.data || []
+      }
       if (!tracks.length) throw new Error(`No playable tracks found in this ${type}.`)
       const data = Object.fromEntries(tracks.map((track) => [track.id, track]))
       const ids = tracks.map((track) => track.id)
@@ -82,15 +101,19 @@ export default function RecentlyPlayed({ type }) {
   }
 
   const title = (item) => records[item.id]?.name || item.name || item.id
-  const url = (item) => `#/${type}/${item.id}/show`
+  const url = (item) => isCatalogue(item)
+    ? `#/catalogue?artist=${encodeURIComponent(catalogueArtistId(item.id))}`
+    : `#/${type}/${item.id}/show`
   const coverRecord = (item) => {
     const record = records[item.id]
+    if (isCatalogue(item)) return null // virtual playlist has no playlist artwork
     return type === 'playlist' && record ? { ...record, sync: !!record.sync } : record
   }
   const cover = (item, size) => <div style={{ width: size, height: size, overflow: 'hidden',
     borderRadius: 5, background: 'rgba(128,128,128,.12)', flexShrink: 0 }}>
-    {records[item.id] && <Artwork record={coverRecord(item)} square
-      className="experimental-recent-cover" title={title(item)} />}
+    {coverRecord(item) ? <Artwork record={coverRecord(item)} square
+      className="experimental-recent-cover" title={title(item)} /> : isCatalogue(item) ?
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}><LibraryMusicIcon /></div> : null}
   </div>
   const playButton = (item) => <Button size="small" color="primary"
     startIcon={<PlayArrowIcon />} disabled={playing !== null || !records[item.id]}
@@ -125,8 +148,9 @@ export default function RecentlyPlayed({ type }) {
           <a href={url(item)} style={{ color: 'inherit', textDecoration: 'none' }}>
             <div style={{ width: '100%', aspectRatio: '1 / 1', overflow: 'hidden', borderRadius: 5,
               background: 'rgba(128,128,128,.12)' }}>
-              {records[item.id] && <Artwork record={coverRecord(item)} square
-                className="experimental-recent-cover" title={title(item)} />}
+              {coverRecord(item) ? <Artwork record={coverRecord(item)} square
+                className="experimental-recent-cover" title={title(item)} /> : isCatalogue(item) ?
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}><LibraryMusicIcon fontSize="large" /></div> : null}
             </div>
             <Typography variant="body2" noWrap title={title(item)} style={{ marginTop: 7 }}>{title(item)}</Typography>
           </a>
