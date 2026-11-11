@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Title, useDataProvider } from 'react-admin'
 import { Button, Card, CardContent, Chip, TextField, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Switch, FormControlLabel } from '@material-ui/core'
-import { readM3USyncStatus, readPlaylistFolder, savePlaylistFolder, previewM3UWriteback, saveM3UWriteback, previewTwoWaySync, applyTwoWaySync, readM3USchedule, saveM3USchedule, resolveUnmatchedM3U, browseM3USongs } from './api'
+import { readM3USyncStatus, readPlaylistFolder, savePlaylistFolder, previewM3UWriteback, saveM3UWriteback, previewTwoWaySync, applyTwoWaySync, readM3USchedule, saveM3USchedule, resolveUnmatchedM3U, browseM3USongs, importM3UFile, deleteMissingM3UPlaylist } from './api'
 import subsonic from '../subsonic'
 
 export default function M3USync() {
@@ -72,6 +72,25 @@ export default function M3USync() {
       setMessage('Library scan started. Navidrome will import changes from M3U files. Open Playlists after the scan finishes.')
       await reload()
     } catch (e) { setError(`M3U import scan failed: ${e?.message || String(e)}. Check Docker container logs for the backend error.`) }
+    finally { setBusy(false) }
+  }
+  const importOne = async (file) => {
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const imported = await importM3UFile(file.name)
+      setMessage(`Imported ${file.name} into Navidrome as ${imported.name}.`)
+      await reload()
+    } catch (e) { setError(`Import failed: ${e?.message || e}`) }
+    finally { setBusy(false) }
+  }
+  const deleteMissing = async (file) => {
+    if (!window.confirm(`The source M3U ${file.name} is missing from Synology. Delete ONLY its Navidrome playlist? This cannot be undone.`)) return
+    setBusy(true); setError(''); setMessage('')
+    try {
+      const result = await deleteMissingM3UPlaylist(file.playlistId)
+      setMessage(`Deleted Navidrome playlist ${result.name}. The Synology files were not changed.`)
+      await reload()
+    } catch (e) { setError(`Deletion failed: ${e?.message || e}`) }
     finally { setBusy(false) }
   }
   const previewWrite = async (file) => {
@@ -256,18 +275,22 @@ export default function M3USync() {
             <Chip size="small" label={`${f.tracks} tracks`} />{' '}
             <Chip size="small" label={f.status} />
             <Typography variant="caption" display="block" color="textSecondary">Last modified: {f.modifiedAt}</Typography>
-            {f.playlistId && !f.sync && <Button size="small" color="primary" disabled={busy} style={{ marginTop: 8 }}
+            {!f.playlistId && !f.missing && <Button size="small" variant="contained" color="primary" disabled={busy}
+              style={{ marginTop: 8 }} onClick={() => importOne(f)}>Import to Navidrome</Button>}
+            {f.missing && f.playlistId && <Button size="small" variant="outlined" color="secondary" disabled={busy}
+              style={{ marginTop: 8 }} onClick={() => deleteMissing(f)}>Delete in Navidrome</Button>}
+            {!f.missing && f.playlistId && !f.sync && <Button size="small" color="primary" disabled={busy} style={{ marginTop: 8 }}
               onClick={() => previewWrite(f)}>Preview Navidrome → M3U writeback</Button>}
-            {f.playlistId && f.sync && <div style={{ marginTop: 8 }}>
+            {!f.missing && f.playlistId && f.sync && <div style={{ marginTop: 8 }}>
               <Typography variant="caption" display="block" color="textSecondary">Auto-import locks editing and hides song checkboxes. Enable editing to use custom two-way sync; regular library scans will no longer overwrite local playlist edits.</Typography>
               <Button size="small" color="primary" disabled={busy} onClick={() => enableEditing(f)}>Enable editing / two-way sync</Button>
             </div>}
-            {f.playlistId && !f.sync && <Button size="small" variant="contained" color="primary" disabled={busy} style={{ marginTop: 8, marginLeft: 8 }} onClick={() => previewSync(f)}>Preview two-way sync</Button>}
+            {!f.missing && f.playlistId && !f.sync && <Button size="small" variant="contained" color="primary" disabled={busy} style={{ marginTop: 8, marginLeft: 8 }} onClick={() => previewSync(f)}>Preview two-way sync</Button>}
           </CardContent></Card>)}
         </div>
       </>}
       <Typography variant="body2" color="textSecondary" style={{ marginTop: 16 }}>
-        Manual two-way sync is also available. Scheduled safe synchronization runs only when enabled. A baseline snapshot and a reference M3U copy are saved under /data/experimental/m3u-sync. Concurrent edits are never merged or overwritten silently: you must choose a side. M3U writes create timestamped backups. External file deletion and automatic merging are not supported. Conflicts are never overwritten by scheduled sync.
+        Manual two-way sync is also available. Scheduled safe synchronization runs only when enabled. A baseline snapshot and a reference M3U copy are saved under /data/experimental/m3u-sync. Concurrent edits are never merged or overwritten silently: you must choose a side. M3U writes create timestamped backups. Missing source M3Us can be removed from Navidrome individually after explicit confirmation; source files are never deleted by this control. Automatic merging is not supported. Conflicts are never overwritten by scheduled sync.
       </Typography>
     </CardContent></Card>
     <Dialog open={!!syncPreview} onClose={() => setSyncPreview(null)} fullWidth maxWidth="sm">

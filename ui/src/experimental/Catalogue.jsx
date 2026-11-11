@@ -13,6 +13,7 @@ import PushPinIcon from '@material-ui/icons/TurnedIn'
 import PushPinOutlinedIcon from '@material-ui/icons/TurnedInNot'
 import { choosePlayback, readState, saveCatalogueIndex, saveCatalogueOrder, saveCataloguePins, exportCatalogueM3U, setPlaybackContext } from './api'
 import { catalogueSongKey, moveCatalogueSong, orderedCatalogueSongs } from './catalogueOrder'
+import { pinyinSortKey } from './collectionSort'
 import ArrowBackIcon from '@material-ui/icons/ArrowBack'
 import PlayArrowIcon from '@material-ui/icons/PlayArrow'
 import GetAppIcon from '@material-ui/icons/GetApp'
@@ -189,6 +190,15 @@ export default function Catalogue() {
       next.splice(to, 0, next.splice(from, 1)[0])
       return next
     })
+  }
+  const autoSortPinnedArtists = (direction) => {
+    const nameById = new Map((artistsIndex || []).map((artist) => [artist.id, artist.name]))
+    const collator = new Intl.Collator('en', { sensitivity: 'base', numeric: true })
+    const sign = direction === 'desc' ? -1 : 1
+    setDraftPins((current) => [...current].sort((a, b) => sign * (
+      collator.compare(pinyinSortKey(nameById.get(a) || a), pinyinSortKey(nameById.get(b) || b)) ||
+      collator.compare(a, b)
+    )))
   }
   const savePinSort = async () => {
     if (pinsSaving) return
@@ -499,6 +509,12 @@ export default function Catalogue() {
             Drag the handle to reorder pinned artists, or use the up/down buttons.
             Your order is saved for this account when you click Save order.
           </Typography>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <Button size="small" variant="outlined" disabled={pinsSaving}
+              onClick={() => autoSortPinnedArtists('asc')}>Sort A → Z / 拼音升序</Button>
+            <Button size="small" variant="outlined" disabled={pinsSaving}
+              onClick={() => autoSortPinnedArtists('desc')}>Sort Z → A / 拼音降序</Button>
+          </div>
           {draftPins.map((id, index) => {
             const artist = (artistsIndex || []).find((item) => item.id === id)
             return <div key={id}

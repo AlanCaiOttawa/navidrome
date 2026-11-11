@@ -249,6 +249,8 @@ func (s *Server) mountExperimentalRoutes() {
 			r.Get("/collection-folders", s.experimentalCollectionFolders)
 			r.Get("/collection-folder-tree", s.experimentalCollectionFolderTree)
 			r.Get("/m3u-folder-status", s.experimentalM3UFolderStatus)
+			r.Post("/m3u-folder-import", s.experimentalM3UImportOne)
+			r.Post("/m3u-folder-delete-missing", s.experimentalM3UDeleteMissing)
 			r.Get("/m3u-auto-schedule", s.experimentalScheduleSettings)
 			r.Put("/m3u-auto-schedule", s.experimentalScheduleSettings)
 			r.Get("/m3u-sync/{id}", s.experimentalSyncPreview)
@@ -991,6 +993,7 @@ func (s *Server) experimentalM3UFolderStatus(w http.ResponseWriter, r *http.Requ
 		Status     string `json:"status"`
 		ModifiedAt string `json:"modifiedAt"`
 		PlaylistID string `json:"playlistId,omitempty"`
+		Missing    bool   `json:"missing,omitempty"`
 		Sync       bool   `json:"sync"`
 	}
 	result := make([]item, 0)
@@ -1028,6 +1031,37 @@ func (s *Server) experimentalM3UFolderStatus(w http.ResponseWriter, r *http.Requ
 			}
 		}
 		result = append(result, row)
+	}
+	// Missing source M3Us cannot be discovered by listing the directory alone.
+	// Surface only file-backed playlists whose original path is inside this
+	// configured folder. Missing-file status never causes automatic deletion.
+	user, _ := request.UserFrom(r.Context())
+	if user.IsAdmin {
+		stored, listErr := s.ds.Playlist().GetAll(r.Context())
+		if listErr != nil {
+			http.Error(w, "cannot inspect stored playlists", 500)
+			return
+		}
+		for _, pl := range stored {
+			if len(result) >= 1000 {
+				break
+			}
+			if pl.Path == "" || pl.IsSmartPlaylist() {
+				continue
+			}
+			if !strings.EqualFold(filepath.Ext(pl.Path), ".m3u") && !strings.EqualFold(filepath.Ext(pl.Path), ".m3u8") {
+				continue
+			}
+			rel, relErr := filepath.Rel(root, filepath.Clean(pl.Path))
+			if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) || strings.Contains(rel, string(os.PathSeparator)) {
+				continue
+			}
+			if _, statErr := os.Stat(pl.Path); !os.IsNotExist(statErr) {
+				continue
+			}
+			result = append(result, item{Name: filepath.Base(pl.Path), PlaylistID: pl.ID,
+				Status: "M3U deleted on Synology — still in Navidrome", Missing: true})
+		}
 	}
 	experimentalRespond(w, 200, map[string]any{"folder": conf.Server.PlaylistsPath, "count": len(result), "files": result})
 }

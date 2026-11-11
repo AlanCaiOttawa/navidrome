@@ -162,6 +162,12 @@ export const readFolderTree = async ({ parent, search } = {}) => {
 }
 
 export const readM3USyncStatus = async () => (await httpClient(`${url}/m3u-folder-status`)).json
+export const importM3UFile = async (name) => (await httpClient(`${url}/m3u-folder-import`, {
+  method: 'POST', body: JSON.stringify({ name }),
+})).json
+export const deleteMissingM3UPlaylist = async (id) => (await httpClient(`${url}/m3u-folder-delete-missing`, {
+  method: 'POST', body: JSON.stringify({ id, confirm: true }),
+})).json
 
 // Choose an indexed music folder and destination using the same native dialog.
 export const addFolderToCollection = async () => {
