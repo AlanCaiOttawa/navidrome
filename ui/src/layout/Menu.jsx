@@ -196,8 +196,6 @@ const Menu = ({ dense = false }) => {
       </SubMenu>
       <MenuItemLink to="/catalogue" primaryText="Catalogue"
         leftIcon={<LibraryMusicIcon />} sidebarIsOpen={open} dense={dense} />
-      <MenuItemLink to="/m3u-sync" primaryText="M3U Playlist Sync"
-        leftIcon={<SyncIcon />} sidebarIsOpen={open} dense={dense} />
       <MenuItemLink to="/recent-albums" primaryText="Recently Played Albums"
         leftIcon={<AlbumIcon />} sidebarIsOpen={open} dense={dense} />
       <MenuItemLink to="/recent-playlists" primaryText="Recently Played Playlists"
@@ -217,6 +215,8 @@ const Menu = ({ dense = false }) => {
         )}
       </SubMenu>
       {resources.filter(subItems(undefined)).map(renderResourceMenuItemLink)}
+      <MenuItemLink to="/m3u-sync" primaryText="Playlist Setting"
+        leftIcon={<SyncIcon />} sidebarIsOpen={open} dense={dense} />
       {config.devSidebarPlaylists && open ? (
         <>
           <Divider />

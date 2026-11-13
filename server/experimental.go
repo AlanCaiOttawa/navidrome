@@ -251,6 +251,9 @@ func (s *Server) mountExperimentalRoutes() {
 			r.Get("/m3u-folder-status", s.experimentalM3UFolderStatus)
 			r.Post("/m3u-folder-import", s.experimentalM3UImportOne)
 			r.Post("/m3u-folder-delete-missing", s.experimentalM3UDeleteMissing)
+			r.Get("/playlist-sort-settings", s.experimentalPlaylistSortSettings)
+			r.Put("/playlist-sort-settings", s.experimentalPlaylistSortSettings)
+			r.Post("/playlist-sort/{id}/now", s.experimentalPlaylistSortNow)
 			r.Get("/m3u-auto-schedule", s.experimentalScheduleSettings)
 			r.Put("/m3u-auto-schedule", s.experimentalScheduleSettings)
 			r.Get("/m3u-sync/{id}", s.experimentalSyncPreview)
@@ -271,6 +274,7 @@ func (s *Server) mountExperimentalRoutes() {
 			r.Put("/song-editor/{id}/playlists/{playlistId}", s.experimentalSongPlaylistAdd)
 			r.Delete("/song-editor/{id}/playlists/{playlistId}", s.experimentalSongPlaylistRemove)
 			r.Post("/catalogue-export-m3u", s.experimentalCatalogueM3U)
+			r.Get("/playlist-export-m3u/{id}", s.experimentalPlaylistExportM3U)
 			r.Get("/state", func(w http.ResponseWriter, req *http.Request) {
 				user, ok := request.UserFrom(req.Context())
 				if !ok {

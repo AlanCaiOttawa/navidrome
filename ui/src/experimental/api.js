@@ -121,6 +121,9 @@ export const choosePlayback = async (type, id, name, data, ids, dispatch, playTr
   dispatch(playTracks(data, ids, selectedKey || undefined))
 }
 
+export const exportPlaylistM3U = async (id) =>
+  (await httpClient(`${url}/playlist-export-m3u/${encodeURIComponent(id)}`)).json
+
 export const readPlaylistFolder = async () => (await httpClient(`${url}/playlist-folder`)).json
 export const savePlaylistFolder = async (folder) => (await httpClient(`${url}/playlist-folder`, {
   method: 'PUT',
@@ -218,6 +221,18 @@ export const applyTwoWaySync = async (playlistId, token, choice) => {
 }
 
 // Administrator-only scheduled sync settings, persisted server-side.
+// Per-playlist auto-sort settings; administrator-only and server-persisted.
+export const readPlaylistSortSettings = async () =>
+  (await httpClient(`${url}/playlist-sort-settings`)).json
+export const savePlaylistSortRule = async (playlistId, enabled, by) =>
+  (await httpClient(`${url}/playlist-sort-settings`, {
+    method: 'PUT',
+    body: JSON.stringify({ playlistId, enabled, by }),
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+  })).json
+export const sortPlaylistNow = async (playlistId) =>
+  (await httpClient(`${url}/playlist-sort/${encodeURIComponent(playlistId)}/now`, { method: 'POST' })).json
+
 export const readM3USchedule = async () =>
   (await httpClient(`${url}/m3u-auto-schedule`)).json
 export const saveM3USchedule = async (schedule) =>

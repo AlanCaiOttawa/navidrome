@@ -186,6 +186,8 @@ func (s *Server) maybeRunExperimentalSchedule(ctx context.Context) {
 		return
 	}
 	s.runExperimentalNightly(ctx, &run)
+	// Playlist ordering is a second phase: synchronization always runs first.
+	s.runExperimentalPlaylistSorts(ctx, &run)
 	run.FinishedAt = time.Now().UTC()
 	_ = saveExperimentalRun(run)
 }

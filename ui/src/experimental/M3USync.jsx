@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { Title, useDataProvider } from 'react-admin'
-import { Button, Card, CardContent, Chip, TextField, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Switch, FormControlLabel } from '@material-ui/core'
-import { readM3USyncStatus, readPlaylistFolder, savePlaylistFolder, previewM3UWriteback, saveM3UWriteback, previewTwoWaySync, applyTwoWaySync, readM3USchedule, saveM3USchedule, resolveUnmatchedM3U, browseM3USongs, importM3UFile, deleteMissingM3UPlaylist } from './api'
+import { Button, Card, CardContent, Chip, TextField, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Switch, FormControlLabel, MenuItem } from '@material-ui/core'
+import { readM3USyncStatus, readPlaylistFolder, savePlaylistFolder, previewM3UWriteback, saveM3UWriteback, previewTwoWaySync, applyTwoWaySync, readM3USchedule, saveM3USchedule, resolveUnmatchedM3U, browseM3USongs, importM3UFile, deleteMissingM3UPlaylist, readPlaylistSortSettings, savePlaylistSortRule, sortPlaylistNow, exportPlaylistM3U } from './api'
 import subsonic from '../subsonic'
 
 export default function M3USync() {
@@ -18,6 +18,55 @@ export default function M3USync() {
   const [message, setMessage] = useState('')
   const [busy, setBusy] = useState(false)
   const [writePreview, setWritePreview] = useState(null)
+  const [playlistSorts, setPlaylistSorts] = useState([])
+  const [sortBusyId, setSortBusyId] = useState('')
+  const [sortError, setSortError] = useState('')
+  const [sortMessage, setSortMessage] = useState('')
+  const reloadPlaylistSorts = useCallback(async () => {
+    const result = await readPlaylistSortSettings()
+    setPlaylistSorts(result.playlists || [])
+  }, [])
+  const editSort = (id, patch) => setPlaylistSorts((rows) => rows.map((row) =>
+    row.id === id ? { ...row, rule: { ...row.rule, ...patch }, dirty: true } : row))
+  const saveSort = async (row) => {
+    setSortBusyId(row.id); setSortError(''); setSortMessage('')
+    try {
+      await savePlaylistSortRule(row.id, !!row.rule.enabled, row.rule.by || 'title')
+      await reloadPlaylistSorts()
+      setSortMessage(`Saved auto-sort preference for ${row.name}.`)
+    } catch (e) { setSortError(e?.message || String(e)) }
+    finally { setSortBusyId('') }
+  }
+  const sortNow = async (row) => {
+    setSortBusyId(row.id); setSortError(''); setSortMessage('')
+    try {
+      const result = await sortPlaylistNow(row.id)
+      setSortMessage(`${row.name}: ${result.status}.`)
+      await reloadPlaylistSorts()
+      await reloadSchedule()
+    } catch (e) { setSortError(e?.message || String(e)) }
+    finally { setSortBusyId('') }
+  }
+  const [exportBusyId, setExportBusyId] = useState('')
+  const exportOnePlaylist = async (row) => {
+    if (exportBusyId) return
+    setExportBusyId(row.id); setSortError(''); setSortMessage('')
+    try {
+      const result = await exportPlaylistM3U(row.id)
+      const safeName = String(row.name || 'Playlist').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim().slice(0, 150) || 'Playlist'
+      const blob = new Blob(['\uFEFF', result.content], { type: 'audio/x-mpegurl;charset=utf-8' })
+      const href = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = href
+      anchor.download = `${safeName}.m3u`
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      setTimeout(() => URL.revokeObjectURL(href), 10000)
+      setSortMessage(`Exported ${row.name}: ${result.count} tracks${result.skipped ? ` (${result.skipped} unavailable skipped)` : ''}. Place the file in the configured Synology Playlist folder.`)
+    } catch (e) { setSortError(`Could not export ${row.name}: ${e?.message || e}`) }
+    finally { setExportBusyId('') }
+  }
   const [schedule, setSchedule] = useState({ enabled: false, time: '00:00', timezone: 'America/Toronto' })
   const [lastRun, setLastRun] = useState(null)
   const [scheduleBusy, setScheduleBusy] = useState(false)
@@ -48,6 +97,7 @@ export default function M3USync() {
   useEffect(() => {
     reload()
     reloadSchedule().catch((e) => setScheduleError(e?.message || String(e)))
+    reloadPlaylistSorts().catch((e) => setSortError(e?.message || String(e)))
     readPlaylistFolder().then((r) => { setFolder(r.folder || r.activeFolder || ''); setActiveFolder(r.activeFolder || '') })
       .catch(() => setMessage('Only administrators can edit the playlist folder setting.'))
   }, [reload])
@@ -190,8 +240,8 @@ export default function M3USync() {
     finally { setBusy(false) }
   }
   return <div style={{ padding: 20, maxWidth: 980 }}>
-    <Title title="Synology M3U Playlist Sync" />
-    <Typography variant="h5" gutterBottom>Synology M3U Playlist Sync</Typography>
+    <Title title="Playlist Setting" />
+    <Typography variant="h5" gutterBottom>Playlist Setting</Typography>
     <Card style={{ marginBottom: 16 }}><CardContent>
       <Typography variant="h6" gutterBottom>Playlist folder</Typography>
       <Typography color="textSecondary" variant="body2" gutterBottom>
@@ -240,6 +290,44 @@ export default function M3USync() {
           {row.fileName || '(folder)'}: {row.action}{row.detail ? ` — ${row.detail}` : ''}
         </Typography>)}
       </div>}
+    </CardContent></Card>
+    <Card style={{ marginBottom: 16 }}><CardContent>
+      <Typography variant="h6" gutterBottom>Automatic Playlist Sorting</Typography>
+      <Typography color="textSecondary" variant="body2" gutterBottom>
+        Each playlist has its own independent sorting rule. Enabled playlists are sorted nightly AFTER the scheduled M3U synchronization. Changes are saved to Navidrome and, for synchronized editable M3U playlists, safely exported back to the M3U with a backup. Conflicts and locked playlists are skipped.
+      </Typography>
+      <Typography variant="caption" display="block" gutterBottom>
+        The nightly job uses the synchronization schedule above. Enable and save that schedule for unattended sorting. “Sort now” runs the saved rule immediately for a single playlist.
+      </Typography>
+      <Button size="small" onClick={() => reloadPlaylistSorts().catch((e) => setSortError(e?.message || String(e)))} disabled={!!sortBusyId}>Refresh playlists</Button>
+      <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
+        {playlistSorts.map((row) => <div key={row.id} style={{ borderBottom: '1px solid #8885', paddingBottom: 10 }}>
+          <Typography variant="subtitle2">{row.name} <Typography component="span" variant="caption" color="textSecondary">({row.count} songs)</Typography></Typography>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <FormControlLabel control={<Switch color="primary" checked={!!row.rule.enabled}
+              disabled={!row.editable || !!sortBusyId}
+              onChange={(e) => editSort(row.id, { enabled: e.target.checked })} />}
+              label="Auto sort" />
+            <TextField select size="small" variant="outlined" label="Sort by" style={{ minWidth: 165 }}
+              disabled={!row.editable || !!sortBusyId}
+              value={row.rule.by || 'title'} onChange={(e) => editSort(row.id, { by: e.target.value })}>
+              <MenuItem value="title">Song title</MenuItem>
+              <MenuItem value="artist">Artist</MenuItem>
+              <MenuItem value="album">Album</MenuItem>
+            </TextField>
+            <Button size="small" variant="contained" color="primary" disabled={!row.editable || !row.dirty || !!sortBusyId}
+              onClick={() => saveSort(row)}>Save</Button>
+            <Button size="small" disabled={!row.editable || !row.rule.enabled || !!row.dirty || !!sortBusyId}
+              onClick={() => sortNow(row)}>Sort now</Button>
+            <Button size="small" variant="outlined" disabled={!!exportBusyId} onClick={() => exportOnePlaylist(row)}>
+              {exportBusyId === row.id ? "Exporting…" : "Export M3U"}</Button>
+          </div>
+          {!row.editable && <Typography variant="caption" color="textSecondary">{row.reason}. Enable editing for imported M3U playlists first; smart playlists cannot be sorted manually.</Typography>}
+        </div>)}
+        {playlistSorts.length === 0 && <Typography color="textSecondary">No playlists available.</Typography>}
+      </div>
+      {sortMessage && <Typography style={{ marginTop: 10 }}>{sortMessage}</Typography>}
+      {sortError && <Typography color="error" style={{ marginTop: 10 }}>{sortError}</Typography>}
     </CardContent></Card>
     <Card><CardContent>
       <Typography variant="h6" gutterBottom>Playlist synchronization</Typography>
