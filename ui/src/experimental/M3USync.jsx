@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Title, useDataProvider } from 'react-admin'
+import { Title, useDataProvider, useRefresh } from 'react-admin'
 import { Button, Card, CardContent, Chip, TextField, Typography, Dialog, DialogTitle, DialogContent, DialogActions, Switch, FormControlLabel, MenuItem } from '@material-ui/core'
-import { readM3USyncStatus, readPlaylistFolder, savePlaylistFolder, previewM3UWriteback, saveM3UWriteback, previewTwoWaySync, applyTwoWaySync, readM3USchedule, saveM3USchedule, resolveUnmatchedM3U, browseM3USongs, importM3UFile, deleteMissingM3UPlaylist, readPlaylistSortSettings, savePlaylistSortRule, sortPlaylistNow, exportPlaylistM3U } from './api'
+import { readM3USyncStatus, readPlaylistFolder, savePlaylistFolder, previewM3UWriteback, saveM3UWriteback, previewTwoWaySync, applyTwoWaySync, readM3USchedule, saveM3USchedule, resolveUnmatchedM3U, browseM3USongs, importM3UFile, deleteMissingM3UPlaylist, readPlaylistSortSettings, savePlaylistSortRule, sortPlaylistNow, saveBulkPlaylistSortRules, exportPlaylistM3U } from './api'
 import subsonic from '../subsonic'
 
 export default function M3USync() {
   const dataProvider = useDataProvider()
+  const refresh = useRefresh()
   const [report, setReport] = useState(null)
   const [syncPreview, setSyncPreview] = useState(null)
   const [folderSync, setFolderSync] = useState([])
@@ -22,6 +23,9 @@ export default function M3USync() {
   const [sortBusyId, setSortBusyId] = useState('')
   const [sortError, setSortError] = useState('')
   const [sortMessage, setSortMessage] = useState('')
+  const [bulkBy, setBulkBy] = useState('artist')
+  const [bulkDirection, setBulkDirection] = useState('asc')
+  const [bulkBusy, setBulkBusy] = useState(false)
   const reloadPlaylistSorts = useCallback(async () => {
     const result = await readPlaylistSortSettings()
     setPlaylistSorts(result.playlists || [])
@@ -31,17 +35,30 @@ export default function M3USync() {
   const saveSort = async (row) => {
     setSortBusyId(row.id); setSortError(''); setSortMessage('')
     try {
-      await savePlaylistSortRule(row.id, !!row.rule.enabled, row.rule.by || 'title')
+      await savePlaylistSortRule(row.id, !!row.rule.enabled, row.rule.by || 'title', row.rule.direction || 'asc')
       await reloadPlaylistSorts()
       setSortMessage(`Saved auto-sort preference for ${row.name}.`)
     } catch (e) { setSortError(e?.message || String(e)) }
     finally { setSortBusyId('') }
   }
+  const applyBulkSort = async () => {
+    if (!window.confirm(`Enable ${bulkBy} (${bulkDirection}) automatic sorting for ALL editable playlists? Existing individual rules will be replaced, and you can customize each afterwards.`)) return
+    setBulkBusy(true); setSortError(''); setSortMessage('')
+    try {
+      const result = await saveBulkPlaylistSortRules(true, bulkBy, bulkDirection)
+      await reloadPlaylistSorts()
+      setSortMessage(`Applied to ${result.updated} editable playlists; ${result.skipped} protected playlists skipped. You may customize each playlist below.`)
+    } catch (e) { setSortError(e?.message || String(e)) }
+    finally { setBulkBusy(false) }
+  }
   const sortNow = async (row) => {
     setSortBusyId(row.id); setSortError(''); setSortMessage('')
     try {
       const result = await sortPlaylistNow(row.id)
-      setSortMessage(`${row.name}: ${result.status}.`)
+      setSortMessage(`${row.name}: ${result.status}. Server verified ${result.trackCount ?? '?'} tracks. First artist key: ${result.firstArtistKey || '(blank)'}; last artist key: ${result.lastArtistKey || '(blank)'}. Refresh the playlist page to see the saved order.`)
+      // Invalidate React-Admin's cached playlist queries, including paginated
+      // track lists which can otherwise still show the previous order.
+      refresh()
       await reloadPlaylistSorts()
       await reloadSchedule()
     } catch (e) { setSortError(e?.message || String(e)) }
@@ -294,11 +311,22 @@ export default function M3USync() {
     <Card style={{ marginBottom: 16 }}><CardContent>
       <Typography variant="h6" gutterBottom>Automatic Playlist Sorting</Typography>
       <Typography color="textSecondary" variant="body2" gutterBottom>
-        Each playlist has its own independent sorting rule. Enabled playlists are sorted nightly AFTER the scheduled M3U synchronization. Changes are saved to Navidrome and, for synchronized editable M3U playlists, safely exported back to the M3U with a backup. Conflicts and locked playlists are skipped.
+        Each playlist has its own independent sorting rule and ascending/descending direction. Enabled playlists are sorted nightly AFTER the scheduled M3U synchronization. Changes are saved to Navidrome and, for synchronized editable M3U playlists, safely exported back to the M3U with a backup. Conflicts and locked playlists are skipped.
       </Typography>
       <Typography variant="caption" display="block" gutterBottom>
         The nightly job uses the synchronization schedule above. Enable and save that schedule for unattended sorting. “Sort now” runs the saved rule immediately for a single playlist.
       </Typography>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '12px 0' }}>
+        <Typography variant="subtitle2">Set auto sort for all editable playlists</Typography>
+        <TextField select size="small" variant="outlined" label="Sort all by" value={bulkBy} onChange={(e) => setBulkBy(e.target.value)} style={{ minWidth: 140 }} disabled={bulkBusy || !!sortBusyId}>
+          <MenuItem value="title">Song title</MenuItem><MenuItem value="artist">Artist</MenuItem><MenuItem value="album">Album</MenuItem>
+        </TextField>
+        <TextField select size="small" variant="outlined" label="Direction" value={bulkDirection} onChange={(e) => setBulkDirection(e.target.value)} style={{ minWidth: 140 }} disabled={bulkBusy || !!sortBusyId}>
+          <MenuItem value="asc">Ascending (A → Z / 拼音升序)</MenuItem><MenuItem value="desc">Descending (Z → A / 拼音降序)</MenuItem>
+        </TextField>
+        <Button size="small" variant="contained" color="primary" disabled={bulkBusy || !!sortBusyId} onClick={applyBulkSort}>Apply to all</Button>
+      </div>
+      <Typography variant="caption" display="block" color="textSecondary">Bulk settings replace existing rules for editable playlists only. Individual playlists can then be customized and saved below. No sorting runs until scheduled time or Sort now.</Typography>
       <Button size="small" onClick={() => reloadPlaylistSorts().catch((e) => setSortError(e?.message || String(e)))} disabled={!!sortBusyId}>Refresh playlists</Button>
       <div style={{ display: 'grid', gap: 10, marginTop: 12 }}>
         {playlistSorts.map((row) => <div key={row.id} style={{ borderBottom: '1px solid #8885', paddingBottom: 10 }}>
@@ -315,9 +343,15 @@ export default function M3USync() {
               <MenuItem value="artist">Artist</MenuItem>
               <MenuItem value="album">Album</MenuItem>
             </TextField>
-            <Button size="small" variant="contained" color="primary" disabled={!row.editable || !row.dirty || !!sortBusyId}
+            <TextField select size="small" variant="outlined" label="Direction" style={{ minWidth: 135 }}
+              disabled={!row.editable || !!sortBusyId || bulkBusy}
+              value={row.rule.direction || 'asc'} onChange={(e) => editSort(row.id, { direction: e.target.value })}>
+              <MenuItem value="asc">Ascending A → Z</MenuItem>
+              <MenuItem value="desc">Descending Z → A</MenuItem>
+            </TextField>
+            <Button size="small" variant="contained" color="primary" disabled={!row.editable || !row.dirty || !!sortBusyId || bulkBusy}
               onClick={() => saveSort(row)}>Save</Button>
-            <Button size="small" disabled={!row.editable || !row.rule.enabled || !!row.dirty || !!sortBusyId}
+            <Button size="small" disabled={!row.editable || !row.rule.enabled || !!row.dirty || !!sortBusyId || bulkBusy}
               onClick={() => sortNow(row)}>Sort now</Button>
             <Button size="small" variant="outlined" disabled={!!exportBusyId} onClick={() => exportOnePlaylist(row)}>
               {exportBusyId === row.id ? "Exporting…" : "Export M3U"}</Button>

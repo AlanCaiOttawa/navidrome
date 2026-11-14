@@ -33,6 +33,7 @@ import FavoriteIcon from '@material-ui/icons/Favorite'
 import config from '../config'
 import PlaylistListActions from './PlaylistListActions'
 import ChangePublicStatusButton from './ChangePublicStatusButton'
+import { PlaylistSyncField } from './PlaylistSyncStatus'
 
 const useStyles = makeStyles((theme) => ({
   button: {
@@ -188,6 +189,7 @@ const PlaylistList = (props) => {
       <Datagrid rowClick="show" isRowSelectable={(r) => isWritable(r?.ownerId)}>
         <ArtworkAvatar source="id" variant="square" />
         <TextField source="name" className={classes.name} />
+        <PlaylistSyncField />
         {columns}
         <Writable>
           <EditButton />

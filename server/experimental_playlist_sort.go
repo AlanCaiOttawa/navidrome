@@ -5,6 +5,7 @@ package server
 // are exported with an M3U backup only when the source and DB are in agreement.
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/navidrome/navidrome/conf"
@@ -22,8 +25,9 @@ import (
 )
 
 type experimentalPlaylistSortRule struct {
-	Enabled bool   `json:"enabled"`
-	By      string `json:"by"`
+	Enabled   bool   `json:"enabled"`
+	By        string `json:"by"`
+	Direction string `json:"direction"`
 }
 type experimentalPlaylistSortEntry struct {
 	ID       string                       `json:"id"`
@@ -65,6 +69,16 @@ func saveExperimentalPlaylistSort(data map[string]experimentalPlaylistSortRule) 
 	}
 	return atomicExperimentalWrite(p, b)
 }
+func validateExperimentalSortDirection(direction string) bool {
+	return direction == "asc" || direction == "desc"
+}
+func normalizedExperimentalDirection(direction string) string {
+	if direction == "desc" {
+		return "desc"
+	}
+	return "asc"
+}
+
 func validateExperimentalSortBy(by string) bool {
 	return by == "title" || by == "artist" || by == "album"
 }
@@ -92,9 +106,17 @@ func (s *Server) experimentalPlaylistSortSettings(w http.ResponseWriter, r *http
 			PlaylistID string `json:"playlistId"`
 			Enabled    bool   `json:"enabled"`
 			By         string `json:"by"`
+			Direction  string `json:"direction"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "invalid JSON", 400)
+			return
+		}
+		if body.Direction == "" {
+			body.Direction = "asc"
+		}
+		if !validateExperimentalSortDirection(body.Direction) {
+			http.Error(w, "invalid direction", 400)
 			return
 		}
 		if !validateExperimentalSortBy(body.By) {
@@ -110,7 +132,7 @@ func (s *Server) experimentalPlaylistSortSettings(w http.ResponseWriter, r *http
 			http.Error(w, "smart or auto-import playlist is read-only", 400)
 			return
 		}
-		rules[pl.ID] = experimentalPlaylistSortRule{Enabled: body.Enabled, By: body.By}
+		rules[pl.ID] = experimentalPlaylistSortRule{Enabled: body.Enabled, By: body.By, Direction: body.Direction}
 		if err := saveExperimentalPlaylistSort(rules); err != nil {
 			http.Error(w, err.Error(), 500)
 			return
@@ -127,6 +149,9 @@ func (s *Server) experimentalPlaylistSortSettings(w http.ResponseWriter, r *http
 		if !validateExperimentalSortBy(rule.By) {
 			rule.By = "title"
 		}
+		if !validateExperimentalSortDirection(rule.Direction) {
+			rule.Direction = "asc"
+		}
 		entry := experimentalPlaylistSortEntry{ID: pl.ID, Name: pl.Name, Count: pl.SongCount, Editable: pl.TracksEditable(), Rule: rule}
 		if !entry.Editable {
 			entry.Reason = "Smart playlist or native auto-import: editing is locked"
@@ -136,10 +161,35 @@ func (s *Server) experimentalPlaylistSortSettings(w http.ResponseWriter, r *http
 	experimentalRespond(w, 200, map[string]any{"playlists": entries})
 }
 
-// Locale-aware comparison keeps Chinese names in a natural collation rather than byte order.
-func sortExperimentalTracks(tracks model.PlaylistTracks, by string) model.PlaylistTracks {
+// The same comprehensive Han-to-pinyin dictionary used by the Catalogue UI.
+//
+//go:embed experimental_han_pinyin.json
+var experimentalHanPinyinJSON []byte
+var experimentalPinyinOnce sync.Once
+var experimentalPinyinMap map[string]string
+
+func experimentalPinyinKey(raw string) string {
+	experimentalPinyinOnce.Do(func() {
+		if err := json.Unmarshal(experimentalHanPinyinJSON, &experimentalPinyinMap); err != nil {
+			experimentalPinyinMap = map[string]string{}
+		}
+	})
+	var sb strings.Builder
+	for _, char := range strings.TrimSpace(raw) {
+		if p, ok := experimentalPinyinMap[string(char)]; ok {
+			sb.WriteString(p)
+		} else {
+			sb.WriteRune(unicode.ToLower(char))
+		}
+	}
+	return sb.String()
+}
+
+// Stable sort of the ENTIRE playlist, using the same Han-to-pinyin dictionary as
+// album collections. New tracks are not treated specially or left at the tail.
+func sortExperimentalTracks(tracks model.PlaylistTracks, by, direction string) model.PlaylistTracks {
 	result := slices.Clone(tracks)
-	c := collate.New(language.MustParse("zh-u-co-pinyin"))
+	c := collate.New(language.English, collate.Numeric, collate.IgnoreCase)
 	value := func(t model.PlaylistTrack) string {
 		switch by {
 		case "artist":
@@ -151,18 +201,32 @@ func sortExperimentalTracks(tracks model.PlaylistTracks, by string) model.Playli
 		}
 	}
 	slices.SortStableFunc(result, func(a, b model.PlaylistTrack) int {
-		x, y := strings.TrimSpace(value(a)), strings.TrimSpace(value(b))
-		if n := c.CompareString(x, y); n != 0 {
-			return n
+		n := c.CompareString(experimentalPinyinKey(value(a)), experimentalPinyinKey(value(b)))
+		if direction == "desc" {
+			return -n
 		}
-		return 0
+		return n
 	})
 	return result
 }
 
-func (s *Server) sortExperimentalPlaylist(ctx context.Context, id string, by string) (string, error) {
-	if !validateExperimentalSortBy(by) {
-		return "", fmt.Errorf("invalid criterion")
+// Compare the actual persisted sequence (not the old client-side list or a
+// single page). Compare IDs at each position to preserve duplicate songs.
+func verifyExperimentalPlaylistOrder(expected, actual model.PlaylistTracks) error {
+	if len(actual) != len(expected) {
+		return fmt.Errorf("expected %d tracks, found %d", len(expected), len(actual))
+	}
+	for i := range expected {
+		if expected[i].MediaFileID != actual[i].MediaFileID {
+			return fmt.Errorf("track %d is not in the requested position", i+1)
+		}
+	}
+	return nil
+}
+
+func (s *Server) sortExperimentalPlaylist(ctx context.Context, id string, by string, direction string) (string, error) {
+	if !validateExperimentalSortBy(by) || !validateExperimentalSortDirection(direction) {
+		return "", fmt.Errorf("invalid sorting rule")
 	}
 	pl, err := s.ds.Playlist().GetWithTracks(ctx, id, false, false)
 	if err != nil || pl == nil {
@@ -174,7 +238,7 @@ func (s *Server) sortExperimentalPlaylist(ctx context.Context, id string, by str
 	if len(pl.Tracks) < 2 {
 		return "already-short", nil
 	}
-	sorted := sortExperimentalTracks(pl.Tracks, by)
+	sorted := sortExperimentalTracks(pl.Tracks, by, direction)
 	unchanged := true
 	for i := range sorted {
 		if sorted[i].MediaFileID != pl.Tracks[i].MediaFileID {
@@ -207,6 +271,16 @@ func (s *Server) sortExperimentalPlaylist(ctx context.Context, id string, by str
 	pl.SetTracks(sorted)
 	if err := s.ds.Playlist().Put(ctx, pl); err != nil {
 		return "", err
+	}
+	// A successful Put must actually persist the requested position of EVERY
+	// track, including tracks at the end of a paginated playlist. Do not report
+	// success just because the in-memory slice was sorted.
+	persisted, readErr := s.ds.Playlist().GetWithTracks(ctx, id, false, false)
+	if readErr != nil || persisted == nil {
+		return "", fmt.Errorf("playlist sort saved but verification read failed: %v", readErr)
+	}
+	if err := verifyExperimentalPlaylistOrder(sorted, persisted.Tracks); err != nil {
+		return "", fmt.Errorf("playlist sort verification failed: %w", err)
 	}
 	if before != nil {
 		// Build fresh inspector after DB reorder so the export uses the new order.
@@ -259,12 +333,25 @@ func (s *Server) experimentalPlaylistSortNow(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "enable and save an auto-sort rule first", 400)
 		return
 	}
-	result, err := s.sortExperimentalPlaylist(r.Context(), id, rule.By)
+	result, err := s.sortExperimentalPlaylist(r.Context(), id, rule.By, normalizedExperimentalDirection(rule.Direction))
 	if err != nil {
 		http.Error(w, err.Error(), 409)
 		return
 	}
-	experimentalRespond(w, 200, map[string]any{"status": result})
+	// Return read-back evidence for the user-facing Sort Now action. In
+	// particular, this makes a stale playlist page distinguishable from a
+	// server-side ordering problem.
+	verified, err := s.ds.Playlist().GetWithTracks(r.Context(), id, false, false)
+	if err != nil || verified == nil {
+		http.Error(w, fmt.Sprintf("sort completed but verification read failed: %v", err), 500)
+		return
+	}
+	first, last := "", ""
+	if len(verified.Tracks) > 0 {
+		first = experimentalPinyinKey(verified.Tracks[0].MediaFile.Artist)
+		last = experimentalPinyinKey(verified.Tracks[len(verified.Tracks)-1].MediaFile.Artist)
+	}
+	experimentalRespond(w, 200, map[string]any{"status": result, "verified": true, "trackCount": len(verified.Tracks), "firstArtistKey": first, "lastArtistKey": last})
 }
 
 func (s *Server) runExperimentalPlaylistSorts(ctx context.Context, run *experimentalSyncRun) {
@@ -281,7 +368,7 @@ func (s *Server) runExperimentalPlaylistSorts(ctx context.Context, run *experime
 		if !rule.Enabled || !validateExperimentalSortBy(rule.By) {
 			continue
 		}
-		action, err := s.sortExperimentalPlaylist(ctx, id, rule.By)
+		action, err := s.sortExperimentalPlaylist(ctx, id, rule.By, normalizedExperimentalDirection(rule.Direction))
 		outcome := experimentalSyncOutcome{FileName: id, Action: "playlist-sort"}
 		if err != nil {
 			run.Skipped++
@@ -289,9 +376,64 @@ func (s *Server) runExperimentalPlaylistSorts(ctx context.Context, run *experime
 			outcome.Detail = err.Error()
 		} else {
 			run.Applied++
-			outcome.Detail = action + " by " + rule.By
+			outcome.Detail = action + " by " + rule.By + " (" + normalizedExperimentalDirection(rule.Direction) + ")"
 		}
 		run.Outcomes = append(run.Outcomes, outcome)
 		_ = saveExperimentalRun(*run)
 	}
+}
+
+// Apply one shared rule to all editable playlists. Per-playlist overrides remain
+// available through the existing single-rule endpoint. Never affect smart or
+// locked auto-import playlists.
+func (s *Server) experimentalPlaylistSortBulk(w http.ResponseWriter, r *http.Request) {
+	user, ok := request.UserFrom(r.Context())
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if !user.IsAdmin {
+		http.Error(w, "administrator required", http.StatusForbidden)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8192)
+	var req struct {
+		Enabled   bool   `json:"enabled"`
+		By        string `json:"by"`
+		Direction string `json:"direction"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+	if !validateExperimentalSortBy(req.By) || !validateExperimentalSortDirection(req.Direction) {
+		http.Error(w, "invalid bulk sorting rule", 400)
+		return
+	}
+	experimentalMu.Lock()
+	defer experimentalMu.Unlock()
+	playlists, err := s.ds.Playlist().GetAll(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	rules, err := loadExperimentalPlaylistSort()
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	updated, skipped := 0, 0
+	for _, pl := range playlists {
+		if !pl.TracksEditable() {
+			skipped++
+			continue
+		}
+		rules[pl.ID] = experimentalPlaylistSortRule{Enabled: req.Enabled, By: req.By, Direction: req.Direction}
+		updated++
+	}
+	if err := saveExperimentalPlaylistSort(rules); err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	experimentalRespond(w, 200, map[string]any{"updated": updated, "skipped": skipped})
 }

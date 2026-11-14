@@ -224,10 +224,16 @@ export const applyTwoWaySync = async (playlistId, token, choice) => {
 // Per-playlist auto-sort settings; administrator-only and server-persisted.
 export const readPlaylistSortSettings = async () =>
   (await httpClient(`${url}/playlist-sort-settings`)).json
-export const savePlaylistSortRule = async (playlistId, enabled, by) =>
+export const savePlaylistSortRule = async (playlistId, enabled, by, direction = 'asc') =>
   (await httpClient(`${url}/playlist-sort-settings`, {
     method: 'PUT',
-    body: JSON.stringify({ playlistId, enabled, by }),
+    body: JSON.stringify({ playlistId, enabled, by, direction }),
+    headers: new Headers({ 'Content-Type': 'application/json' }),
+  })).json
+export const saveBulkPlaylistSortRules = async (enabled, by, direction) =>
+  (await httpClient(`${url}/playlist-sort-bulk`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled, by, direction }),
     headers: new Headers({ 'Content-Type': 'application/json' }),
   })).json
 export const sortPlaylistNow = async (playlistId) =>

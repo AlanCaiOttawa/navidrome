@@ -253,6 +253,7 @@ func (s *Server) mountExperimentalRoutes() {
 			r.Post("/m3u-folder-delete-missing", s.experimentalM3UDeleteMissing)
 			r.Get("/playlist-sort-settings", s.experimentalPlaylistSortSettings)
 			r.Put("/playlist-sort-settings", s.experimentalPlaylistSortSettings)
+			r.Put("/playlist-sort-bulk", s.experimentalPlaylistSortBulk)
 			r.Post("/playlist-sort/{id}/now", s.experimentalPlaylistSortNow)
 			r.Get("/m3u-auto-schedule", s.experimentalScheduleSettings)
 			r.Put("/m3u-auto-schedule", s.experimentalScheduleSettings)

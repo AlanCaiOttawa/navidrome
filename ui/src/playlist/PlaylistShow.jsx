@@ -14,6 +14,7 @@ import EditIcon from '@material-ui/icons/Edit'
 import PlaylistDetails from './PlaylistDetails'
 import PlaylistSongs from './PlaylistSongs'
 import PlaylistActions from './PlaylistActions'
+import { PlaylistSyncNotice } from './PlaylistSyncStatus'
 import {
   Pagination,
   Title,
@@ -86,7 +87,7 @@ const EnableImportedPlaylistEditing = ({ record }) => {
           </Typography>
           <Typography>
             To reconcile later changes with the source M3U file, use the separate
-            M3U Playlist Sync page. Your M3U file will not be changed by this action.
+            Playlist Setting page. Your M3U file will not be changed by this action.
           </Typography>
         </DialogContent>
         <DialogActions>
@@ -110,6 +111,7 @@ const PlaylistShowLayout = (props) => {
     <>
       {record && <RaTitle title={<Title subTitle={record.name} />} />}
       {record && <PlaylistDetails {...context} />}
+      {record && <PlaylistSyncNotice record={record} />}
       {record && <EnableImportedPlaylistEditing record={record} />}
       {record && (
         <ReferenceManyField
