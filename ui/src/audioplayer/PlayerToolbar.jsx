@@ -5,6 +5,7 @@ import { GlobalHotKeys } from 'react-hotkeys'
 import IconButton from '@material-ui/core/IconButton'
 import { useMediaQuery } from '@material-ui/core'
 import { RiSaveLine } from 'react-icons/ri'
+import { MdLyrics } from 'react-icons/md'
 import { LoveButton, useToggleLove } from '../common'
 import { openSaveQueueDialog } from '../actions'
 import { keyMap } from '../hotkeys'
@@ -55,7 +56,7 @@ const useStyles = makeStyles((theme) => ({
   },
 }))
 
-const PlayerToolbar = ({ id, isRadio }) => {
+const PlayerToolbar = ({ id, isRadio, onLyricsClick, lyricsOpen }) => {
   const dispatch = useDispatch()
   const { data, loading } = useGetOne('song', id, { enabled: !!id && !isRadio })
   const [toggleLove, toggling] = useToggleLove('song', data)
@@ -89,6 +90,21 @@ const PlayerToolbar = ({ id, isRadio }) => {
     </IconButton>
   )
 
+  const lyricsButton = (
+    <IconButton
+      size={isDesktop ? 'small' : undefined}
+      onClick={(event) => { event.stopPropagation(); onLyricsClick() }}
+      disabled={isRadio || !id}
+      title="Online lyrics (supports compatible Navidrome plugins)"
+      aria-label="Toggle online lyrics"
+      aria-pressed={Boolean(lyricsOpen)}
+      className={buttonClass}
+      style={{ color: lyricsOpen ? '#93e4bb' : undefined }}
+    >
+      <MdLyrics className={!isDesktop ? classes.mobileIcon : undefined} />
+    </IconButton>
+  )
+
   const loveButton = (
     <LoveButton
       record={data}
@@ -105,11 +121,13 @@ const PlayerToolbar = ({ id, isRadio }) => {
       {isDesktop ? (
         <li className={`${listItemClass} item`}>
           {saveQueueButton}
+          {lyricsButton}
           {loveButton}
         </li>
       ) : (
         <>
           <li className={`${listItemClass} item`}>{saveQueueButton}</li>
+          <li className={`${listItemClass} item`}>{lyricsButton}</li>
           <li className={`${listItemClass} item`}>{loveButton}</li>
         </>
       )}

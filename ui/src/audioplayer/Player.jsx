@@ -27,6 +27,8 @@ import {
   syncQueue,
 } from '../actions'
 import PlayerToolbar from './PlayerToolbar'
+import PluginLyricsPanel from './PluginLyricsPanel'
+import { fetchPluginLyrics } from './pluginLyrics'
 import { sendNotification } from '../utils'
 import subsonic from '../subsonic'
 import locale from './locale'
@@ -48,13 +50,46 @@ const Player = () => {
   const currentTrackIdRef = useRef(null)
   const stoppedRef = useRef(false)
   const [audioInstance, setAudioInstance] = useState(null)
+  const [lyricsOpen, setLyricsOpen] = useState(false)
+  const [remoteLyrics, setRemoteLyrics] = useState(null)
+  const [lyricsLoading, setLyricsLoading] = useState(false)
+  const [lyricsError, setLyricsError] = useState(false)
+  const [lyricTime, setLyricTime] = useState(0)
+  const lyricsCacheRef = useRef(new Map())
+  const { authenticated } = useAuthState()
+  const lyricTrackId = playerState.current?.isRadio ? null : playerState.current?.trackId
+
+  // The standard endpoint resolves the active configured lyrics source, not a
+  // named provider. Ignore stale responses when users rapidly skip songs.
+  useEffect(() => {
+    if (!lyricsOpen || !lyricTrackId || !authenticated) return
+    let cancelled = false
+    setRemoteLyrics(null)
+    setLyricsError(false)
+    setLyricTime(0)
+    if (lyricsCacheRef.current.has(lyricTrackId)) {
+      setRemoteLyrics(lyricsCacheRef.current.get(lyricTrackId))
+      setLyricsLoading(false)
+      return
+    }
+    setLyricsLoading(true)
+    fetchPluginLyrics(lyricTrackId).then((lyrics) => {
+      if (cancelled) return
+      lyricsCacheRef.current.set(lyricTrackId, lyrics)
+      setRemoteLyrics(lyrics)
+    }).catch((error) => {
+      if (cancelled) return
+      console.warn('Could not retrieve OpenSubsonic lyrics:', error)
+      setLyricsError(true)
+    }).finally(() => { if (!cancelled) setLyricsLoading(false) })
+    return () => { cancelled = true }
+  }, [lyricsOpen, lyricTrackId, authenticated])
+
   const isDesktop = useMediaQuery('(min-width:810px)')
   const isMobilePlayer =
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
       navigator.userAgent,
     )
-
-  const { authenticated } = useAuthState()
 
   // Keep a ref to playerState so the mount effect can read the latest value
   // without re-triggering on every queue/position change
@@ -251,7 +286,7 @@ const Player = () => {
         (playerState.clear || playerState.playIndex === 0),
       clearPriorAudioLists: playerState.clear,
       extendsContent: (
-        <PlayerToolbar id={current.trackId} isRadio={current.isRadio} />
+        <PlayerToolbar id={current.trackId} isRadio={current.isRadio} onLyricsClick={() => setLyricsOpen((open) => !open)} lyricsOpen={lyricsOpen} />
       ),
       defaultVolume: isMobilePlayer ? 1 : playerState.volume,
       showMediaSession: !current.isRadio,
@@ -264,13 +299,30 @@ const Player = () => {
   )
 
   const onAudioProgress = useCallback((info) => {
+<<<<<<< Updated upstream
+=======
+    const pendingSeek = getResumeSeek()
+    if (pendingSeek?.trackId === info.trackId && audioInstance) {
+      try {
+        audioInstance.currentTime = pendingSeek.seconds
+        clearResumeSeek()
+      } catch (error) { console.warn('Resume seek failed:', error) }
+    }
+    if (lyricsOpen && info.currentTime != null) {
+      setLyricTime(info.currentTime)
+    }
+>>>>>>> Stashed changes
     if (info.ended) {
       document.title = 'Navidrome'
     }
     if (!info.isRadio && info.currentTime != null) {
       lastPositionMsRef.current = Math.floor(info.currentTime * 1000)
     }
+<<<<<<< Updated upstream
   }, [])
+=======
+  }, [audioInstance, lyricsOpen])
+>>>>>>> Stashed changes
 
   const onAudioVolumeChange = useCallback(
     // sqrt to compensate for the logarithmic volume
@@ -471,6 +523,14 @@ const Player = () => {
         onBeforeDestroy={onBeforeDestroy}
         getAudioInstance={setAudioInstance}
       />
+      {lyricsOpen && <PluginLyricsPanel
+        lyrics={remoteLyrics}
+        trackTitle={playerState.current?.song?.title}
+        currentTime={lyricTime}
+        loading={lyricsLoading}
+        error={lyricsError}
+        onClose={() => setLyricsOpen(false)}
+      />}
       <GlobalHotKeys handlers={handlers} keyMap={keyMap} allowChanges />
     </ThemeProvider>
   )
