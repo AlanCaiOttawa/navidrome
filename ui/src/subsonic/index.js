@@ -72,6 +72,10 @@ const getScanStatus = () => httpClient(url('getScanStatus'))
 
 const getNowPlaying = () => httpClient(url('getNowPlaying'))
 
+// OpenSubsonic endpoint: resolves embedded lyrics and compatible lyrics plugins.
+const getLyricsBySongId = (id) =>
+  httpClient(url('getLyricsBySongId', id)).then(({ json }) => json)
+
 const getAvatarUrl = (username, size) =>
   baseUrl(
     url('getAvatar', null, {
@@ -152,6 +156,7 @@ export default {
   startScan,
   getScanStatus,
   getNowPlaying,
+  getLyricsBySongId,
   getCoverArtUrl,
   getDiscCoverArtUrl,
   getAvatarUrl,
